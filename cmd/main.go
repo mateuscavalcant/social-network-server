@@ -1,15 +1,15 @@
 package main
 
-import
-(
-	"github.com/joho/godotenv"
+import (
 	"log"
-	"social-network-server/pkg/database"
-	"github.com/gin-gonic/gin"
+	"net/http"
 	"social-network-server/api/routes"
+	"social-network-server/pkg/database"
 
+	"github.com/gin-contrib/gzip"
+	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
-
 
 
 func main() {
