@@ -3,7 +3,6 @@ package database
 import (
 	"database/sql"
 	"log"
-	"os"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -13,9 +12,9 @@ var db *sql.DB
 // InitializeDB initializes the database connection pool.
 func InitializeDB() {
 	// Retrieve database credentials from environment variables.
-	user := os.Getenv("DB_USER")
-	password := os.Getenv("DB_PASSWORD")
-	_db := os.Getenv("DB")
+	user := "root"
+	password := "123"
+	_db := "mydb"
 	dbSource := user + ":" + password + "@tcp(localhost:3306)/" + _db
 
 	// Open a connection to the MySQL database.

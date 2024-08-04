@@ -2,15 +2,15 @@ package handlers
 
 import (
 	"log"
+	"net/http"
+	"os"
 	"social-network-server/pkg/database"
 	"social-network-server/pkg/models"
-
 	"social-network-server/pkg/models/errs"
 
-	"social-network-server/api/utils"
-
-	"strconv"
 	"strings"
+
+	"github.com/dgrijalva/jwt-go"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -46,25 +46,51 @@ func UserLogin(c *gin.Context) {
 	if err != nil {
 		log.Println("Error executing SQL statement:", err)
 		resp.Error["credentials"] = "Invalid credentials"
+		c.JSON(400, resp)
+		return
 	}
+
+	// Print the user's ID
+	log.Println("User ID:", user.ID)
 
 	// Compare the hashed password from the database with the provided password
 	encErr := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 	if encErr != nil {
 		resp.Error["password"] = "Invalid password"
-	}
-
-	// If there are errors, return them; otherwise, log the user in and return success message
-	if len(resp.Error) > 0 {
 		c.JSON(400, resp)
 		return
 	}
 
-	// Store user session information
-	session := utils.GetSession(c)
-	session.Values["id"] = strconv.Itoa(user.ID)
-	session.Values["email"] = user.Email
-	session.Save(c.Request, c.Writer)
+	// Set the user ID in the context of the request
+	c.Set("id", user.ID)
 
-	c.JSON(200, gin.H{"message": "User logged in successfully"})
+	// Create JWT token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"id":    user.ID,
+		"email": user.Email,
+	})
+
+	// Sign and get the complete encoded token as a string
+	tokenString, err := token.SignedString([]byte(os.Getenv("SESSION_SECRET")))
+	if err != nil {
+		log.Println("Error signing token:", err)
+		c.JSON(500, gin.H{"error": "Failed to generate token"})
+		return
+	}
+
+	// Create a cookie with the token
+	cookie := http.Cookie{
+		Name:     "token",
+		Value:    tokenString,
+		HttpOnly: true,
+	}
+
+	// Set the cookie in the response
+	http.SetCookie(c.Writer, &cookie)
+
+	// Return success message to the client
+	c.JSON(200, gin.H{
+		"message": "User logged in successfully",
+		"token":   tokenString,
+	})
 }

@@ -11,21 +11,15 @@ import (
 
 	"social-network-server/pkg/models/errs"
 
-	"social-network-server/api/utils"
-
 	"social-network-server/api/views"
 
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
-
-    var user models.UserProfile
-	var post models.UserPost
-
-
+var user models.UserProfile
+var post models.UserPost
 
 // AnotherUserProfile handles requests to view another user's profile.
 func AnotherUserProfile(c *gin.Context) {
@@ -33,6 +27,8 @@ func AnotherUserProfile(c *gin.Context) {
 	username := c.Param("username")
 	db := database.GetDB()
 	var targetUserID int
+	var chatPartnerUsername string
+	var chatPartnerIcon []byte
 	post.UserID = targetUserID
 
 	// Query the database to get the ID of the target user
@@ -88,7 +84,18 @@ func AnotherUserProfile(c *gin.Context) {
 
 	// Query user's posts
 	posts := []models.UserPost{}
-	query := "SELECT user_post.post_id, user_post.id AS user_post_id, user_post.content, user.id AS user_id, user.username, user.name FROM user_post JOIN user ON user.id = user_post.id WHERE user.id = ?"
+	query := `
+	SELECT user_post.postID, 
+       user_post.id AS user_post_id, 
+       user_post.content, 
+       user.id AS user_id, 
+       user.username, 
+       user.name 
+FROM user_post 
+JOIN user ON user.id = user_post.id 
+WHERE user.id = ? 
+ORDER BY user_post.created_at DESC
+`
 	rows, err := db.Query(query, targetUserID)
 	if err != nil {
 		log.Println("Failed to query statement", err)
@@ -135,9 +142,14 @@ func AnotherUserProfile(c *gin.Context) {
 	// Encode user's icon to base64
 	imageBase64 := base64.StdEncoding.EncodeToString(user.Icon)
 
-	// Retrieve current user ID from session
-	idInterface, _ := utils.AllSessions(c)
-	id, _ := strconv.Atoi(idInterface.(string))
+	// Obter o ID do usuário da sessão JWT
+	id, exists := c.Get("id")
+	if !exists {
+		// Lidar com o caso em que o ID do usuário não está disponível
+		log.Println("ID do usuário não encontrado na sessão")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ID do usuário não encontrado na sessão"})
+		return
+	}
 
 	// Check if the current user is following the target user
 	queryFollow := "SELECT COUNT(*) FROM user_follow WHERE followBy = ? AND followTo = ?"
@@ -150,19 +162,67 @@ func AnotherUserProfile(c *gin.Context) {
 	// Set FollowBy field based on follow status
 	user.FollowBy = followCount > 0
 
+	// Check if the current user is following the target user
+	queryFollowTo := "SELECT COUNT(*) FROM user_follow WHERE followBy = ? AND followTo = ?"
+	var followToCount int
+	errFollowto := db.QueryRow(queryFollowTo, targetUserID, id).Scan(&followToCount)
+	if errFollow != nil {
+		log.Println("Failed to check follow status:", errFollowto)
+	}
+
+	// Set FollowBy field based on follow status
+	user.FollowTo = followToCount > 0
+
+	var targetUsername string
+
+	// Consulta para obter o username do usuário com base no id
+	queryUsername := "SELECT username FROM user WHERE id = ?"
+	err = db.QueryRow(queryUsername, id).Scan(&targetUsername)
+	if err != nil {
+		log.Println("Failed to retrieve target user's username:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve target user's username"})
+		return
+	}
+
+	isCurrentUser := username == targetUsername
+
+	log.Println(isCurrentUser)
+
+	log.Println(username)
+
+	// Obter o user e o ícone do usuário
+	err = db.QueryRow("SELECT username, icon FROM user WHERE id = ?", id).Scan(&chatPartnerUsername, &chatPartnerIcon)
+	if err != nil {
+		log.Println("Failed to query chat partner details:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Failed to get chat partner details"})
+		return
+	}
+	var chatPartnerIconBase64 string
+	if chatPartnerIcon != nil {
+		chatPartnerIconBase64 = base64.StdEncoding.EncodeToString(chatPartnerIcon)
+	}
+
 	// Return the target user's public profile with their public posts
 	c.JSON(http.StatusOK, gin.H{
-		"profile": user,
-		"posts":   posts,
-		"icon":    imageBase64, // Send the base64 encoded image to the client
+		"profile":       user,
+		"posts":         posts,
+		"icon":          imageBase64, // Send the base64 encoded image to the client
+		"isCurrentUser": isCurrentUser,
+		"chatPartner":   gin.H{"username": chatPartnerUsername, "iconBase64": chatPartnerIconBase64},
 	})
 }
 
 // Profile handles requests to view the user's own profile.
 func Profile(c *gin.Context) {
-	// Retrieve user ID from session
-	idInterface, _ := utils.AllSessions(c)
-	id, _ := strconv.Atoi(idInterface.(string))
+	// Obter o ID do usuário da sessão JWT
+	userId, exists := c.Get("id")
+	if !exists {
+		// Lidar com o caso em que o ID do usuário não está disponível
+		log.Println("ID do usuário não encontrado na sessão")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ID do usuário não encontrado na sessão"})
+		return
+	}
+	id, _ := userId.(int)
 	db := database.GetDB()
 
 	post.UserID = id
@@ -203,7 +263,7 @@ func Profile(c *gin.Context) {
 
 	// Query user's posts
 	posts := []models.UserPost{}
-	query := "SELECT user_post.post_id, user_post.id AS user_post_id, user_post.content, user.id AS user_id, user.username, user.name FROM user_post JOIN user ON user.id = user_post.id WHERE user.id = ?"
+	query := "SELECT user_post.postID, user_post.id AS user_post_id, user_post.content, user.id AS user_id, user.username, user.name FROM user_post JOIN user ON user.id = user_post.id WHERE user.id = ?"
 	rows, err := db.Query(query, id)
 	if err != nil {
 		log.Println("Failed to query statement", err)
@@ -260,9 +320,15 @@ func Profile(c *gin.Context) {
 
 // RenderProfileTemplate renders the user's profile template based on the request.
 func RenderProfileTemplate(c *gin.Context) {
-	// Retrieve user ID from session
-	idInterface, _ := utils.AllSessions(c)
-	id, _ := strconv.Atoi(idInterface.(string))
+	// Obter o ID do usuário da sessão JWT
+	userId, exists := c.Get("id")
+	if !exists {
+		// Lidar com o caso em que o ID do usuário não está disponível
+		log.Println("ID do usuário não encontrado na sessão")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ID do usuário não encontrado na sessão"})
+		return
+	}
+	id, _ := userId.(int)
 
 	// Retrieve username from request parameters
 	username := c.Param("username")
@@ -315,14 +381,15 @@ func RenderProfileTemplate(c *gin.Context) {
 
 // EditProfile handles requests to edit the user's profile.
 func EditProfile(c *gin.Context) {
-	// Retrieve user ID from session
-	idInterface, exists := utils.AllSessions(c)
-	if exists == false || idInterface == nil {
-		c.Redirect(http.StatusUnauthorized, "/login")
+	// Obter o ID do usuário da sessão JWT
+	userId, exists := c.Get("id")
+	if !exists {
+		// Lidar com o caso em que o ID do usuário não está disponível
+		log.Println("ID do usuário não encontrado na sessão")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ID do usuário não encontrado na sessão"})
 		return
 	}
-
-	id, _ := strconv.Atoi(idInterface.(string))
+	id, _ := userId.(int)
 
 	var fileBytes []byte
 	file, _, err := c.Request.FormFile("icon")

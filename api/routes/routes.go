@@ -2,7 +2,7 @@ package routes
 
 import (
 	"social-network-server/api/handlers"
-	"social-network-server/api/middleware"
+	middlewares "social-network-server/api/middleware"
 	"social-network-server/api/views"
 
 	"github.com/gin-gonic/gin"
@@ -16,7 +16,7 @@ func InitRoutes(r *gin.RouterGroup) {
 	r.POST("/validate-username", handlers.ExistUsername)
 	r.POST("/login", handlers.UserLogin)
 
-	r.Use(middleware.AuthMiddleware())
+	r.Use(middlewares.AuthMiddleware())
 
 	r.GET("/home", views.HomeView)
 	r.POST("/create-post", handlers.CreateNewPost)
@@ -31,6 +31,8 @@ func InitRoutes(r *gin.RouterGroup) {
 	r.POST("/edit-profile", handlers.EditProfile)
 	r.POST("create-message/:username", handlers.CreateNewMessage)
 	r.POST("/chat/:username", handlers.Chat)
-	r.GET("/chat/:username", views.ChatView)
 	r.GET("/websocket/:username", handlers.WebSocketHandler)
+	r.POST("/chats", handlers.FeedChats)
+	r.GET("/chats", handlers.WebSocketFeedChats)
+
 }

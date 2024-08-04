@@ -2,50 +2,39 @@ package handlers
 
 import (
 	"encoding/base64"
+	"fmt"
 	"log"
 	"net/http"
 	"social-network-server/pkg/database"
 	"social-network-server/pkg/models"
+	"strconv"
 
 	"social-network-server/pkg/models/errs"
-
-	"social-network-server/api/utils"
-
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Feed retrieves posts for the current user's feed.
 func Feed(c *gin.Context) {
-	idInterface, exists := utils.AllSessions(c)
-	if exists == false || idInterface == nil {
-		c.Redirect(http.StatusUnauthorized, "/login")
-		return
-	}
-
-	idString, ok := idInterface.(string)
-	if !ok {
-		c.String(http.StatusInternalServerError, "Internal Server Error")
-		return
-	}
-
-	id, err := strconv.Atoi(idString)
-	if err != nil {
-		c.String(http.StatusInternalServerError, "Internal Server Error")
+	// Obter o ID do usuário da sessão JWT
+	id, exists := c.Get("id")
+	if !exists {
+		// Lidar com o caso em que o ID do usuário não está disponível
+		log.Println("ID do usuário não encontrado na sessão")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ID do usuário não encontrado na sessão"})
 		return
 	}
 
 	db := database.GetDB()
 
 	var post models.UserPost
-	post.UserID = id
+	var chatPartnerUsername string
+	var chatPartnerIcon []byte
 
 	posts := []models.UserPost{}
 
 	query := `
-    SELECT user_post.post_id, user_post.id AS post_user_id, user_post.content,
+    SELECT user_post.postID, user_post.id AS post_user_id, user_post.content,
            user.id AS user_id, user.username, user.name, user.icon
     FROM user_post
     JOIN user ON user.id = user_post.id
@@ -54,7 +43,7 @@ func Feed(c *gin.Context) {
         FROM user_follow
         WHERE user_follow.followBy = ?
     )
-    ORDER BY user_post.created_at ASC
+    ORDER BY user_post.created_at DESC
 `
 
 	rows, err := db.Query(query, id, id)
@@ -94,69 +83,99 @@ func Feed(c *gin.Context) {
 			IconBase64: imageBase64,
 		})
 	}
+	log.Println("Number of posts retrieved:", len(posts)) // Log para verificar o número de posts
+
+	// Obter o user e o ícone do usuário
+	err = db.QueryRow("SELECT username, icon FROM user WHERE id = ?", id).Scan(&chatPartnerUsername, &chatPartnerIcon)
+	if err != nil {
+		log.Println("Failed to query chat partner details:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Failed to get chat partner details"})
+		return
+	}
+	var chatPartnerIconBase64 string
+	if chatPartnerIcon != nil {
+		chatPartnerIconBase64 = base64.StdEncoding.EncodeToString(chatPartnerIcon)
+	}
+
+	post.IconBase64 = chatPartnerIconBase64
+
 	c.JSON(http.StatusOK, gin.H{
-		"posts": posts,
+		"posts":       posts,
+		"chatPartner": gin.H{"username": chatPartnerUsername, "iconBase64": chatPartnerIconBase64},
 	})
 }
 
-// CreateNewPost creates a new post for the current user.
 func CreateNewPost(c *gin.Context) {
 	var userPost models.UserPost
 	errresp := errs.ErrorResponse{
 		Error: make(map[string]string),
 	}
 
-	content := strings.TrimSpace(c.PostForm("content"))
-	idInterface, _ := utils.AllSessions(c)
-	if idInterface == nil {
-		// If the user is not logged in, return an authentication error
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Unauthorized",
-		})
+	// Obter o ID do usuário da sessão JWT
+	userID, exists := c.Get("id")
+	if !exists {
+		log.Println("ID do usuário não encontrado na sessão")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ID do usuário não encontrado na sessão"})
 		return
 	}
 
-	if content == "" {
-		errresp.Error["content"] = "Values are missing!"
+	// Ler o corpo da requisição JSON
+	if err := c.ShouldBindJSON(&userPost); err != nil {
+		log.Println("Erro ao vincular JSON:", err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dados de post inválidos"})
+		return
+	}
+
+	log.Printf("Recebido conteúdo do post: %s", userPost.Content)
+
+	// Validar conteúdo do post
+	if userPost.Content == "" {
+		errresp.Error["content"] = "O conteúdo do post não pode estar vazio!"
 	}
 
 	if len(errresp.Error) > 0 {
-		c.JSON(400, errresp)
+		c.JSON(http.StatusBadRequest, errresp)
 		return
 	}
 
-	id, _ := strconv.Atoi(idInterface.(string))
-	userPost.Content = content
+	id, errId := strconv.Atoi(fmt.Sprintf("%v", userID))
+	if errId != nil {
+		log.Println("Erro ao converter ID do usuário para int:", errId)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ID do usuário inválido"})
+		c.Abort()
+		return
+	}
 
-	db := database.GetDB()
-
+	// Obter nome de usuário
 	var username string
+	db := database.GetDB()
 	err := db.QueryRow("SELECT username FROM user WHERE id = ?", id).Scan(&username)
 	if err != nil {
 		log.Println("Error querying username:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to query username",
+			"error": "Falha ao consultar nome de usuário",
 		})
 		return
 	}
 
+	// Preencher dados do post
 	userPost.CreatedBy = username
 
+	// Executar inserção no banco de dados
 	stmt, err := db.Prepare("INSERT INTO user_post(content, createdBy, id, created_at) VALUES (?, ?, ?, NOW())")
-
 	if err != nil {
-		log.Println("Error preparing SQL statement:", err)
+		log.Println("Erro ao preparar declaração SQL:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to prepare statement",
+			"error": "Falha ao preparar declaração",
 		})
 		return
 	}
 
 	rs, err := stmt.Exec(userPost.Content, userPost.CreatedBy, id)
 	if err != nil {
-		log.Println("Error executing SQL statement:", err)
+		log.Println("Erro ao executar declaração SQL:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to execute statement",
+			"error": "Falha ao executar declaração",
 		})
 		return
 	}
@@ -164,8 +183,8 @@ func CreateNewPost(c *gin.Context) {
 	insertID, _ := rs.LastInsertId()
 
 	resp := map[string]interface{}{
-		"postID": insertID,
-		"mssg":   "Post Created!!",
+		"postID":  insertID,
+		"message": "Post criado com sucesso!",
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -173,27 +192,19 @@ func CreateNewPost(c *gin.Context) {
 // DeletePost deletes a post based on its ID.
 func DeletePost(c *gin.Context) {
 	postID := c.PostForm("post")
-	userIDInterface, _ := utils.AllSessions(c)
-
-	if userIDInterface == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Unauthorized",
-		})
-		return
-	}
-
-	userID, err := strconv.Atoi(userIDInterface.(string))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Invalid user ID",
-		})
+	// Obter o ID do usuário da sessão JWT
+	id, exists := c.Get("id")
+	if !exists {
+		// Lidar com o caso em que o ID do usuário não está disponível
+		log.Println("ID do usuário não encontrado na sessão")
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ID do usuário não encontrado na sessão"})
 		return
 	}
 
 	db := database.GetDB()
 
 	var postAuthorID int
-	err = db.QueryRow("SELECT id FROM user_post WHERE postID=?", postID).Scan(&postAuthorID)
+	err := db.QueryRow("SELECT id FROM user_post WHERE postID=?", postID).Scan(&postAuthorID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to fetch post details",
@@ -201,7 +212,7 @@ func DeletePost(c *gin.Context) {
 		return
 	}
 
-	if postAuthorID != userID {
+	if postAuthorID != id {
 		c.JSON(http.StatusForbidden, gin.H{
 			"error": "You don't have permission to delete this post",
 		})

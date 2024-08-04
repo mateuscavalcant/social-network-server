@@ -11,11 +11,6 @@ type User struct {
 	ConfirmPassword string `json:"cpassword" binding:"required"`
 }
 
-type UserLogin struct {
-	Credential string `json:"credential"`
-	Password   string
-}
-
 type UserFollow struct {
 	FollowID int `json:"follow-id"`
 	FollowBy int `json:"follow-by"`
@@ -43,21 +38,22 @@ type UserProfile struct {
 	Bio           string `json:"bio"`
 	Posts         int    `json:"countposts"`
 	FollowBy      bool   `json:"followby"`
+	FollowTo      bool   `json:"followto"`
 	FollowByCount int    `json:"followbycount"`
 	FollowToCount int    `json:"followtocount"`
 }
 
-
 type UserMessage struct {
-	MessageSession bool `json:"messagesession"`
-	MessageID     int    `json:"post-id"`
-	MessageUserID int    `json:"post-user-id"`
-	UserID     int    `json:"user-id"`
-	Content    string `json:"content"`
-	Icon       []byte `json:"icon"`
-	IconBase64 string `json:"iconbase64"`
-	CreatedBy  string `json:"createdby"`
-	Name       string `json:"createdbyname"`
-	MessageBy int `json:"message-by"`
-	MessageTo  int `json:"message-to"`
+	MessageSession bool   `json:"messagesession"`
+	MessageID      int    `json:"post-id"`
+	MessageUserID  int    `json:"post-user-id"`
+	UserID         int    `json:"user-id"`
+	Content        string `json:"content"`
+	Icon           []byte `json:"icon"`
+	IconBase64     string `json:"iconbase64"`
+	CreatedBy      string `json:"createdby"`
+	Name           string `json:"createdbyname"`
+	MessageBy      int    `json:"message-by"`
+	MessageTo      int    `json:"message-to"`
+	CreatedAt      string `json:"hourminute"`
 }
